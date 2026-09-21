@@ -49,7 +49,7 @@ st.caption(
 
 with st.sidebar:
     st.header("Table (轉台) 相對於 World")
-    err = st.slider("Table Z 軸誤差 (deg)", 0.0, 10.0, 5.0, 0.1)
+    err = st.slider("Table Z 軸誤差 (deg)", 0.0, 30.0, 5.0, 0.1)
 
     st.header("DUT 相對於 Table")
     dut_rz = st.slider("DUT yaw (deg)", -180, 180, 15)
@@ -127,7 +127,7 @@ ax3 = fig3d.add_subplot(111, projection="3d")
 
 frames = [
     ("World", np.eye(3), np.array([0., 0, 0])),
-    ("Table", R_turn, np.array([0., 0, 0])),
+    ("Table", t_coor, np.array([0., 0, 0])),
     ("DUT", DUT_world, np.array([5., 10, 2])),
     ("Gyro", Gyro_world, np.array([15., 12, 8])),
 ]
@@ -141,11 +141,12 @@ for name, R, o in frames:
         ax3.text(o[0] + d[0] * 1.2, o[1] + d[1] * 1.2, o[2] + d[2] * 1.2,
                  f"{name}-{lbl}", fontsize=8)
 
-# 轉台盤面: xy 平面 (法向量 = 當前轉軸方向)，隨 θ 繞斜軸擺動
+# 轉台盤面: xy 平面 (法向量 = 當前轉軸方向)，隨 θ 繞斜軸自轉
 disc_r = 6.0
+base = R_turn @ t_coor
+ex = base[:, 0]
+ey = base[:, 1]
 ang = np.linspace(0, 2 * np.pi, 40)
-ex = R_turn[:, 0]
-ey = R_turn[:, 1]
 px = ex[0] * np.cos(ang) + ey[0] * np.sin(ang)
 py = ex[1] * np.cos(ang) + ey[1] * np.sin(ang)
 pz = ex[2] * np.cos(ang) + ey[2] * np.sin(ang)
