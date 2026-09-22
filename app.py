@@ -3,6 +3,7 @@ import pandas as pd
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import plotly.graph_objects as go
 import streamlit as st
 
 st.set_page_config(page_title="Rate Table 標定模型", layout="wide")
@@ -32,51 +33,65 @@ def rotz(a):
                      [0, 0, 1]])
 
 
+def rodrigues(k, theta_deg):
+    th = np.deg2rad(theta_deg)
+    c, s = np.cos(th), np.sin(th)
+    K = np.array([[0, -k[2], k[1]],
+                  [k[2], 0, -k[0]],
+                  [-k[1], k[0], 0]])
+    return c * np.eye(3) + (1 - c) * np.outer(k, k) + s * K
+
+
 st.title("轉台 (Rate Table) 陀螺儀標定模型")
 st.caption(
-    "各物體 (Table / DUT / Gyro) 有獨立的靜態世界姿態 (roll/pitch/yaw)。"
-    "Table 帶有 non-orthogonal 製造誤差，轉軸 = Table 合成姿態的 Z 軸。"
-    "轉台以角速度 ω 動態旋轉，問 gyro 量到多少角速度。"
+    "運動學鏈: World → Table → DUT → Gyro。Table 為 non-orthogonal 基底 (製造誤差)，"
+    "真實轉軸 = Table 自身 Z 軸。轉台繞此斜軸正交旋轉，帶動 DUT/Gyro (保持正交)。"
 )
 
 with st.sidebar:
-    st.header("Table (轉台) 世界姿態")
-    t_roll = st.number_input("Table roll (deg)", -180.0, 180.0, 0.0, 0.1)
-    t_pitch = st.number_input("Table pitch (deg)", -180.0, 180.0, 0.0, 0.1)
-    t_yaw = st.number_input("Table yaw (deg)", -180.0, 180.0, 0.0, 0.1)
-    err = st.number_input("Table Z 軸製造誤差 (deg)", 0.0, 30.0, 5.0, 0.1)
+    st.header("Table (轉台) 相對於 World")
+    err = st.slider("Table Z 軸誤差 (deg)", 0.0, 30.0, 5.0, 0.1)
 
-    st.header("DUT 世界姿態")
-    d_roll = st.number_input("DUT roll (deg)", -180.0, 180.0, 5.0, 0.1)
-    d_pitch = st.number_input("DUT pitch (deg)", -180.0, 180.0, 10.0, 0.1)
-    d_yaw = st.number_input("DUT yaw (deg)", -180.0, 180.0, 15.0, 0.1)
+    st.header("DUT 相對於 Table")
+    dut_rz = st.slider("DUT yaw (deg)", -180, 180, 15)
+    dut_ry = st.slider("DUT pitch (deg)", -180, 180, 10)
+    dut_rx = st.slider("DUT roll (deg)", -180, 180, 5)
 
-    st.header("Gyro 世界姿態")
-    g_roll = st.number_input("Gyro roll (deg)", -180.0, 180.0, 60.0, 0.1)
-    g_pitch = st.number_input("Gyro pitch (deg)", -180.0, 180.0, 30.0, 0.1)
-    g_yaw = st.number_input("Gyro yaw (deg)", -180.0, 180.0, -45.0, 0.1)
+    st.header("Gyro 相對於 DUT")
+    g_rz = st.slider("Gyro yaw (deg)", -180, 180, -45)
+    g_ry = st.slider("Gyro pitch (deg)", -180, 180, 30)
+    g_rx = st.slider("Gyro roll (deg)", -180, 180, 60)
 
-    st.header("動態旋轉")
+    st.header("驅動轉台")
     omega = st.slider("角速度 ω (d/s)", 0.0, 10.0, 1.0, 0.1)
 
-# 各物體獨立靜態世界姿態 (正交)
-Table_ini = rotz(t_yaw) @ roty(t_pitch) @ rotx(t_roll)
-DUT_ini = rotz(d_yaw) @ roty(d_pitch) @ rotx(d_roll)
-Gyro_ini = rotz(g_yaw) @ roty(g_pitch) @ rotx(g_roll)
-
-# Table non-orthogonal 製造誤差基底
 err = np.deg2rad(err)
 t_coor = np.array([[1, 0, np.sin(err)],
                    [0, 1, 0],
                    [0, 0, np.cos(err)]])
+R_dut = rotz(dut_rz) @ roty(dut_ry) @ rotx(dut_rx)
+R_g = rotz(g_rz) @ roty(g_ry) @ rotx(g_rx)
 
-# Table 合成姿態 + 轉軸 (動態轉動軸)
-T_ini = Table_ini @ t_coor
-z_axis = T_ini[:, 2]
+# 真實轉軸 (世界下, 單位向量): Table 自身 Z 軸方向
+z_axis = t_coor[:, 2]
 
-# gyro 量測: 轉台繞 z_axis 以 ω 動態旋轉，投影到 gyro 世界姿態
+# 轉台繞 z_axis 轉 θ 的正交旋轉 (Rodrigues); θ 由 Plotly 動畫控制
+R_turn = rodrigues(z_axis, 0.0)
+
+# DUT / Gyro 世界姿態 (正交, 不繼承 non-orthogonal 誤差)
+DUT_world = R_turn @ R_dut
+Gyro_world = R_turn @ R_dut @ R_g
+
+# 角速度向量 (世界下) 沿真實轉軸
 w_world = z_axis.reshape(3, 1) * omega
-w_gyro = Gyro_ini.T @ w_world
+
+# gyro 自身座標下量到的值 (與 θ 無關: R_turn'@z_axis = z_axis)
+w_gyro = Gyro_world.T @ w_world
+
+# 各座標系下看到的角速度 (供對照)
+w_in_table = t_coor.T @ w_world
+w_in_dut = R_dut.T @ w_in_table
+w_in_gyro = R_g.T @ w_in_dut
 
 norm = np.linalg.norm(w_gyro)
 
@@ -107,60 +122,157 @@ st.pyplot(fig)
 plt.close(fig)
 
 st.header("座標系 3D 視覺 (World / Table / DUT / Gyro)")
-fig3d = plt.figure(figsize=(7, 6))
-ax3 = fig3d.add_subplot(111, projection="3d")
 
-frames = [
-    ("World", np.eye(3), np.array([0., 0, 0])),
-    ("Table", T_ini, np.array([0., 0, 0])),
-    ("DUT", DUT_ini, np.array([5., 10, 2])),
-    ("Gyro", Gyro_ini, np.array([15., 12, 8])),
-]
-axis_colors = {"X": "tab:red", "Y": "tab:green", "Z": "tab:blue"}
 axis_len = 4.0
-for name, R, o in frames:
-    for i, (lbl, col) in enumerate(axis_colors.items()):
-        d = R[:, i] * axis_len
-        ax3.plot([o[0], o[0] + d[0]], [o[1], o[1] + d[1]], [o[2], o[2] + d[2]],
-                 color=col, lw=2)
-        ax3.text(o[0] + d[0] * 1.2, o[1] + d[1] * 1.2, o[2] + d[2] * 1.2,
-                 f"{name}-{lbl}", fontsize=8)
-
-# 轉台盤面: xy 平面 (法向量 = 轉軸 z_axis)
 disc_r = 6.0
-ex = T_ini[:, 0]
-ey = T_ini[:, 1]
-ang = np.linspace(0, 2 * np.pi, 40)
-px = ex[0] * np.cos(ang) + ey[0] * np.sin(ang)
-py = ex[1] * np.cos(ang) + ey[1] * np.sin(ang)
-pz = ex[2] * np.cos(ang) + ey[2] * np.sin(ang)
-ax3.plot_surface(np.outer(px, [1, 1]) * disc_r,
-                 np.outer(py, [1, 1]) * disc_r,
-                 np.outer(pz, [1, 1]) * disc_r,
-                 color="orange", alpha=0.25)
-ax3.plot(disc_r * px, disc_r * py, disc_r * pz, color="darkorange", lw=1.5,
-         label="table disc")
+origins = {
+    "Table": np.array([0., 0, 0]),
+    "DUT": np.array([5., 10, 2]),
+    "Gyro": np.array([15., 12, 8]),
+}
+axis_colors = {"X": "red", "Y": "green", "Z": "blue"}
+axis_lbl = {"X": "X", "Y": "Y", "Z": "Z"}
 
-# 動態轉軸線 (z_axis)
-k = z_axis
-ax3.plot([0, k[0] * 6], [0, k[1] * 6], [0, k[2] * 6],
-         color="black", lw=2, ls="--", label="rotation axis")
 
-ax3.set_xlabel("X")
-ax3.set_ylabel("Y")
-ax3.set_zlabel("Z")
-ax3.set_title("Coordinate frames (Red=X, Green=Y, Blue=Z) + table disc")
-ax3.legend(loc="upper left", fontsize=8)
-st.pyplot(fig3d)
-plt.close(fig3d)
+def add_frame_traces(fig, name, R, o, show_legend=True):
+    for i, lbl in enumerate(["X", "Y", "Z"]):
+        d = R[:, i] * axis_len
+        fig.add_trace(go.Scatter3d(
+            x=[o[0], o[0] + d[0]], y=[o[1], o[1] + d[1]], z=[o[2], o[2] + d[2]],
+            mode="lines", line=dict(color=axis_colors[lbl], width=3),
+            name=f"{name}-{lbl}" if show_legend else None,
+            showlegend=show_legend and i == 0,
+            legendgroup=name,
+        ))
+        fig.add_trace(go.Scatter3d(
+            x=[o[0] + d[0] * 1.15], y=[o[1] + d[1] * 1.15], z=[o[2] + d[2] * 1.15],
+            mode="text", text=[f"{name}-{lbl}"], textfont=dict(size=9),
+            showlegend=False, legendgroup=name,
+        ))
+
+
+def add_disc_trace(fig, R, o, show_legend=True):
+    ex = R[:, 0]
+    ey = R[:, 1]
+    ang = np.linspace(0, 2 * np.pi, 40)
+    px = (ex[0] * np.cos(ang) + ey[0] * np.sin(ang)) * disc_r
+    py = (ex[1] * np.cos(ang) + ey[1] * np.sin(ang)) * disc_r
+    pz = (ex[2] * np.cos(ang) + ey[2] * np.sin(ang)) * disc_r
+    fig.add_trace(go.Scatter3d(
+        x=px + o[0], y=py + o[1], z=pz + o[2],
+        mode="lines", line=dict(color="darkorange", width=2),
+        name="table disc", showlegend=show_legend,
+    ))
+
+
+def add_axis_trace(fig, k, show_legend=True):
+    fig.add_trace(go.Scatter3d(
+        x=[0, k[0] * 6], y=[0, k[1] * 6], z=[0, k[2] * 6],
+        mode="lines", line=dict(color="black", width=2, dash="dash"),
+        name="rotation axis", showlegend=show_legend,
+    ))
+
+
+def build_plot(theta_deg):
+    R_turn = rodrigues(z_axis, theta_deg)
+    DUT_w = R_turn @ R_dut
+    Gyro_w = R_turn @ R_dut @ R_g
+    T_w = R_turn @ t_coor
+    fig = go.Figure()
+    add_frame_traces(fig, "Table", T_w, origins["Table"], show_legend=False)
+    add_frame_traces(fig, "DUT", DUT_w, origins["DUT"], show_legend=False)
+    add_frame_traces(fig, "Gyro", Gyro_w, origins["Gyro"], show_legend=True)
+    add_disc_trace(fig, T_w, origins["Table"], show_legend=False)
+    add_axis_trace(fig, z_axis, show_legend=False)
+    fig.update_layout(
+        scene=dict(xaxis_title="X", yaxis_title="Y", zaxis_title="Z",
+                   aspectmode="data"),
+        title="Coordinate frames (Red=X, Green=Y, Blue=Z) + table disc",
+        showlegend=True,
+        updatemenus=[dict(
+            type="buttons", showactive=False,
+            x=1.0, y=1.15, xanchor="right",
+            buttons=[
+                dict(label="Play", method="animate",
+                     args=[None, dict(frame=dict(duration=40, redraw=True),
+                                      transition=dict(duration=0),
+                                      fromcurrent=True, mode="immediate")]),
+                dict(label="Pause", method="animate",
+                     args=[[None], dict(frame=dict(duration=0, redraw=True),
+                                        mode="immediate")]),
+            ],
+        )],
+    )
+    fig.update_scenes(xaxis=dict(range=[-8, 20]), yaxis=dict(range=[-8, 20]),
+                      zaxis=dict(range=[-8, 20]))
+    return fig
+
+
+n_frames = 60
+thetas = np.linspace(0, 360, n_frames, endpoint=False)
+fig_anim = build_plot(0.0)
+all_frames = []
+for th in thetas:
+    R_turn = rodrigues(z_axis, float(th))
+    DUT_w = R_turn @ R_dut
+    Gyro_w = R_turn @ R_dut @ R_g
+    T_w = R_turn @ t_coor
+    fr_traces = []
+    for name, R, o in [("Table", T_w, origins["Table"]),
+                       ("DUT", DUT_w, origins["DUT"]),
+                       ("Gyro", Gyro_w, origins["Gyro"])]:
+        for i, lbl in enumerate(["X", "Y", "Z"]):
+            d = R[:, i] * axis_len
+            fr_traces.append(go.Scatter3d(
+                x=[o[0], o[0] + d[0]], y=[o[1], o[1] + d[1]], z=[o[2], o[2] + d[2]],
+                mode="lines", line=dict(color=axis_colors[lbl], width=3),
+                showlegend=False))
+            fr_traces.append(go.Scatter3d(
+                x=[o[0] + d[0] * 1.15], y=[o[1] + d[1] * 1.15], z=[o[2] + d[2] * 1.15],
+                mode="text", text=[f"{name}-{lbl}"], textfont=dict(size=9),
+                showlegend=False))
+    ex = T_w[:, 0]; ey = T_w[:, 1]
+    ang = np.linspace(0, 2 * np.pi, 40)
+    px = (ex[0] * np.cos(ang) + ey[0] * np.sin(ang)) * disc_r
+    py = (ex[1] * np.cos(ang) + ey[1] * np.sin(ang)) * disc_r
+    pz = (ex[2] * np.cos(ang) + ey[2] * np.sin(ang)) * disc_r
+    fr_traces.append(go.Scatter3d(x=px, y=py, z=pz, mode="lines",
+                                  line=dict(color="darkorange", width=2),
+                                  showlegend=False))
+    fr_traces.append(go.Scatter3d(x=[0, z_axis[0] * 6], y=[0, z_axis[1] * 6],
+                                  z=[0, z_axis[2] * 6], mode="lines",
+                                  line=dict(color="black", width=2, dash="dash"),
+                                  showlegend=False))
+    all_frames.append(go.Frame(data=fr_traces, name=f"{th:.0f}"))
+
+fig_anim.update(frames=all_frames)
+
+fig_anim.update_layout(
+    sliders=[dict(steps=[dict(method="animate",
+                              args=[[f.name], dict(mode="immediate",
+                                                   frame=dict(duration=0))],
+                              label=f.name) for f in fig_anim.frames],
+                  transition=dict(duration=0))],
+)
+st.plotly_chart(fig_anim, use_container_width=True)
 
 st.header("Static pose matrices")
-frames = [
-    ("World", np.eye(3)),
-    ("Table (合成)", T_ini),
-    ("DUT", DUT_ini),
-    ("Gyro", Gyro_ini),
-]
+show_parent = st.checkbox("Show parent-relative poses instead", value=False)
+
+if show_parent:
+    frames = [
+        ("Table / World", R_turn),
+        ("DUT / Table", R_dut),
+        ("Gyro / DUT", R_g),
+    ]
+else:
+    frames = [
+        ("World", np.eye(3)),
+        ("Table / World", R_turn),
+        ("DUT / World", DUT_world),
+        ("Gyro / World", Gyro_world),
+    ]
+
 cols = st.columns(len(frames))
 for col, (name, M) in zip(cols, frames):
     with col:
@@ -170,20 +282,28 @@ for col, (name, M) in zip(cols, frames):
                                   columns=["X", "Y", "Z"]),
                      use_container_width=True)
 
+st.header("各座標系下看到的角速度 (d/s)")
+df = pd.DataFrame({
+    "X": [w_world[0, 0], w_in_table[0, 0], w_in_dut[0, 0], w_in_gyro[0, 0]],
+    "Y": [w_world[1, 0], w_in_table[1, 0], w_in_dut[1, 0], w_in_gyro[1, 0]],
+    "Z": [w_world[2, 0], w_in_table[2, 0], w_in_dut[2, 0], w_in_gyro[2, 0]],
+}, index=["World", "Table", "DUT", "Gyro"])
+st.dataframe(df, use_container_width=True)
+
 st.divider()
 st.subheader("說明")
 st.write(
-    f"- 動態轉動軸 (世界下): z_axis = [{z_axis[0]:.4f}, {z_axis[1]:.4f}, {z_axis[2]:.4f}]"
-    f"  = Table 合成姿態 Z 軸 (含製造誤差)"
+    f"- 真實轉軸 (世界下): z_axis = [{z_axis[0]:.4f}, {z_axis[1]:.4f}, {z_axis[2]:.4f}]"
+    f"  (Table 自身 Z 軸, non-orthogonal)"
 )
 st.write(
-    "- 姿態與旋轉分離: Table/DUT/Gyro 各有獨立靜態世界姿態 (roll/pitch/yaw)；"
-    "轉台繞 z_axis 以 ω 動態旋轉，不改變靜態姿態。"
+    "- 轉台繞 z_axis 做正交 Rodrigues 旋轉 R_turn(θ)，DUT/Gyro 世界姿態全程正交"
+    " (不繼承製造誤差)。"
 )
 st.write(
-    f"- gyro 量測: w_gyro = Gyro_iniᵀ·(ω·z_axis)"
-    f" = [{w_gyro[0,0]:.4f}, {w_gyro[1,0]:.4f}, {w_gyro[2,0]:.4f}] d/s"
+    "- gyro 量測與轉動角度 θ 無關: w_gyro = Gyro_worldᵀ·(ω·z_axis)"
+    " = ω·R_gᵀ·R_dutᵀ·z_axis (因 R_turnᵀ·z_axis = z_axis)。"
 )
 st.caption(
-    "non-orthogonal 製造誤差反映在 z_axis 方向，進而影響 gyro 量測的三軸分量。"
+    "non-orthogonal 誤差反映在真實轉軸 z_axis 方向，進而影響 gyro 量測的三軸分量。"
 )
