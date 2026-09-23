@@ -124,12 +124,6 @@ w_in_gyro = R_g.T @ w_in_dut
 
 norm = np.linalg.norm(w_gyro)
 
-col1, col2, col3 = st.columns(3)
-col1.metric("wx", f"{w_gyro[0, 0]:.4f}", "d/s")
-col2.metric("wy", f"{w_gyro[1, 0]:.4f}", "d/s")
-col3.metric("wz", f"{w_gyro[2, 0]:.4f}", "d/s")
-st.metric("大小 |w|", f"{norm:.4f}", "d/s")
-
 st.header("座標系 3D 視覺 (World / Table / DUT / Gyro)")
 
 axis_len = 4.0
