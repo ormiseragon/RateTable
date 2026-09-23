@@ -130,26 +130,6 @@ col2.metric("wy", f"{w_gyro[1, 0]:.4f}", "d/s")
 col3.metric("wz", f"{w_gyro[2, 0]:.4f}", "d/s")
 st.metric("大小 |w|", f"{norm:.4f}", "d/s")
 
-st.header("Gyro 量到的角速度 (自身座標)")
-fig, ax = plt.subplots(figsize=(6, 3))
-labels = ["wx", "wy", "wz"]
-colors = ["tab:red", "tab:green", "tab:blue"]
-vals = [w_gyro[0, 0], w_gyro[1, 0], w_gyro[2, 0]]
-xs = [0, 1, 2]
-for x, v, c in zip(xs, vals, colors):
-    ax.plot([-0.3, 2.3], [v, v], color=c, lw=2, alpha=0.9)
-    ax.plot(x, v, "o", color=c, ms=7)
-    ax.text(x, v, f" {v:.3f}", color=c, va="center", fontsize=9)
-ax.set_xticks(xs)
-ax.set_xticklabels(labels)
-ax.set_ylabel("d/s")
-ax.set_ylim(-1.5, 1.5)
-ax.axhline(0, color="gray", lw=0.5, ls="--")
-ax.grid(True, ls=":", alpha=0.4)
-ax.set_title("Gyro angular rate (body frame)")
-st.pyplot(fig)
-plt.close(fig)
-
 st.header("座標系 3D 視覺 (World / Table / DUT / Gyro)")
 
 axis_len = 4.0
@@ -213,14 +193,28 @@ def build_plot(theta_deg):
     add_frame_traces(fig, "Gyro", Gyro_w, origins["Gyro"], show_legend=True)
     add_disc_trace(fig, T_w, origins["Table"], show_legend=False)
     add_axis_trace(fig, axis_world, show_legend=False)
+    fig.add_annotation(
+        x=0.0, y=1.02, xanchor="left", yanchor="top", align="left",
+        showarrow=False, xref="paper", yref="paper",
+        font=dict(size=11, color="white", family="monospace"),
+        bgcolor="rgba(0,0,0,0.55)", bordercolor="gray", borderwidth=1,
+        text=(
+            "<b>Angular rate (d/s)</b><br>"
+            f"World : [{w_world[0,0]:+.3f}, {w_world[1,0]:+.3f}, {w_world[2,0]:+.3f}]<br>"
+            f"Table : [{w_in_table[0,0]:+.3f}, {w_in_table[1,0]:+.3f}, {w_in_table[2,0]:+.3f}]<br>"
+            f"DUT   : [{w_in_dut[0,0]:+.3f}, {w_in_dut[1,0]:+.3f}, {w_in_dut[2,0]:+.3f}]<br>"
+            f"Gyro  : [{w_in_gyro[0,0]:+.3f}, {w_in_gyro[1,0]:+.3f}, {w_in_gyro[2,0]:+.3f}]<br>"
+            f"|w|=<b>{norm:.3f}</b>"
+        ),
+    )
     fig.update_layout(
         scene=dict(
             xaxis_title="X", yaxis_title="Y", zaxis_title="Z",
-            aspectmode="data",
+            aspectmode="cube",
             camera=dict(
-                eye=dict(x=16 * math.cos(math.radians(elevation)) * math.sin(math.radians(azimuth)),
-                         y=16 * math.cos(math.radians(elevation)) * math.cos(math.radians(azimuth)),
-                         z=16 * math.sin(math.radians(elevation))),
+                eye=dict(x=1.6 * math.cos(math.radians(elevation)) * math.sin(math.radians(azimuth)),
+                         y=1.6 * math.cos(math.radians(elevation)) * math.cos(math.radians(azimuth)),
+                         z=1.6 * math.sin(math.radians(elevation))),
                 up=dict(x=0, y=0, z=1),
                 center=dict(x=0, y=0, z=0),
             ),
@@ -228,8 +222,8 @@ def build_plot(theta_deg):
         title="Coordinate frames (Red=X, Green=Y, Blue=Z) + table disc",
         showlegend=True,
         updatemenus=[dict(
-            type="buttons", showactive=False,
-            x=1.0, y=1.15, xanchor="right",
+            type="buttons", showactive=False, direction="right",
+            x=1.0, y=0.03, xanchor="right", yanchor="bottom",
             buttons=[
                 dict(label="Play", method="animate",
                      args=[None, dict(frame=dict(duration=40, redraw=True),
@@ -296,7 +290,7 @@ fig_anim.update_layout(
                               label=f.name) for f in fig_anim.frames],
                   transition=dict(duration=0))],
 )
-st.plotly_chart(fig_anim, use_container_width=True)
+st.plotly_chart(fig_anim, use_container_width=True, height=750)
 
 st.header("Static pose matrices")
 show_parent = st.checkbox("Show parent-relative poses instead", value=False)
@@ -326,14 +320,6 @@ for col, (name, M) in zip(cols, frames):
                                   index=["X", "Y", "Z"],
                                   columns=["X", "Y", "Z"]),
                      use_container_width=True)
-
-st.header("各座標系下看到的角速度 (d/s)")
-df = pd.DataFrame({
-    "X": [w_world[0, 0], w_in_table[0, 0], w_in_dut[0, 0], w_in_gyro[0, 0]],
-    "Y": [w_world[1, 0], w_in_table[1, 0], w_in_dut[1, 0], w_in_gyro[1, 0]],
-    "Z": [w_world[2, 0], w_in_table[2, 0], w_in_dut[2, 0], w_in_gyro[2, 0]],
-}, index=["World", "Table", "DUT", "Gyro"])
-st.dataframe(df, use_container_width=True)
 
 st.divider()
 st.subheader("說明")
