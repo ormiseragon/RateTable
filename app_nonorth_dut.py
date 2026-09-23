@@ -64,8 +64,10 @@ with st.sidebar:
     g_ry = st.slider("Gyro pitch (deg)", -180, 180, 30)
     g_rx = st.slider("Gyro roll (deg)", -180, 180, 60)
 
-    st.header("驅動轉台")
+    st.header("驅動轉台 (三軸定位)")
     omega = st.slider("角速度 ω (d/s)", 0.0, 10.0, 1.0, 0.1)
+    axis_choice = st.radio("轉台繞軸 (一次一軸)", ["Z", "X", "Y"], index=0)
+    target_theta = st.slider("目標角度 θ (deg)", 0.0, 360.0, 0.0, 1.0)
 
 err = np.deg2rad(err)
 t_coor = np.array([[1, 0, np.sin(err)],
@@ -80,20 +82,33 @@ R_dut = (rodrigues(t_z, dut_rz)
          @ rodrigues(t_y, dut_ry)
          @ rodrigues(t_x, dut_rx))
 
-# 真實轉軸 (世界下, 單位向量): Table 自身 Z 軸方向
-z_axis = t_coor[:, 2]
+# 轉台軸索引: Z->2, X->0, Y->1 (對應 Table 自身斜軸)
+axis_idx = {"Z": 2, "X": 0, "Y": 1}[axis_choice]
+base_axis = t_coor[:, axis_idx]
 
-# 轉台繞 z_axis 轉 θ 的正交旋轉 (Rodrigues); θ 由 Plotly 動畫控制
-R_turn = rodrigues(z_axis, 0.0)
+# R_turn 累積 (session_state): 從 identity 開始, 按下累積才左乘
+if "R_turn" not in st.session_state:
+    st.session_state["R_turn"] = np.eye(3)
+R_turn = st.session_state["R_turn"].copy()
 
-# DUT / Gyro 世界姿態 (正交, 不繼承 non-orthogonal 誤差)
+# 當下轉軸 (世界下): 已被累積姿態帶到當下位置
+axis_world = R_turn @ base_axis
+
+# 累積此段旋轉 (繞當下軸轉 target_theta, 左乘)
+accumulate = st.button("累積此段旋轉", type="primary")
+if accumulate:
+    st.session_state["R_turn"] = rodrigues(axis_world, target_theta) @ st.session_state["R_turn"]
+    R_turn = st.session_state["R_turn"].copy()
+    axis_world = R_turn @ base_axis
+
+# DUT / Gyro 世界姿態
 DUT_world = R_turn @ R_dut
 Gyro_world = R_turn @ R_dut @ R_g
 
-# 角速度向量 (世界下) 沿真實轉軸
-w_world = z_axis.reshape(3, 1) * omega
+# 角速度向量 (世界下) 沿當下轉軸
+w_world = axis_world.reshape(3, 1) * omega
 
-# gyro 自身座標下量到的值 (與 θ 無關: R_turn'@z_axis = z_axis)
+# gyro 自身座標下量到的值
 w_gyro = Gyro_world.T @ w_world
 
 # 各座標系下看到的角速度 (供對照)
@@ -182,16 +197,16 @@ def add_axis_trace(fig, k, show_legend=True):
 
 
 def build_plot(theta_deg):
-    R_turn = rodrigues(z_axis, theta_deg)
-    DUT_w = R_turn @ R_dut
-    Gyro_w = R_turn @ R_dut @ R_g
-    T_w = R_turn @ t_coor
+    R_turn_t = rodrigues(axis_world, theta_deg) @ R_turn
+    DUT_w = R_turn_t @ R_dut
+    Gyro_w = R_turn_t @ R_dut @ R_g
+    T_w = R_turn_t @ t_coor
     fig = go.Figure()
     add_frame_traces(fig, "Table", T_w, origins["Table"], show_legend=False)
     add_frame_traces(fig, "DUT", DUT_w, origins["DUT"], show_legend=False)
     add_frame_traces(fig, "Gyro", Gyro_w, origins["Gyro"], show_legend=True)
     add_disc_trace(fig, T_w, origins["Table"], show_legend=False)
-    add_axis_trace(fig, z_axis, show_legend=False)
+    add_axis_trace(fig, axis_world, show_legend=False)
     fig.update_layout(
         scene=dict(xaxis_title="X", yaxis_title="Y", zaxis_title="Z",
                    aspectmode="data"),
@@ -217,14 +232,17 @@ def build_plot(theta_deg):
 
 
 n_frames = 60
-thetas = np.linspace(0, 360, n_frames, endpoint=False)
-fig_anim = build_plot(0.0)
+if target_theta > 0:
+    thetas = np.linspace(0, target_theta, n_frames, endpoint=True)
+else:
+    thetas = [0.0]
+fig_anim = build_plot(thetas[0])
 all_frames = []
 for th in thetas:
-    R_turn = rodrigues(z_axis, float(th))
-    DUT_w = R_turn @ R_dut
-    Gyro_w = R_turn @ R_dut @ R_g
-    T_w = R_turn @ t_coor
+    R_turn_t = rodrigues(axis_world, float(th)) @ R_turn
+    DUT_w = R_turn_t @ R_dut
+    Gyro_w = R_turn_t @ R_dut @ R_g
+    T_w = R_turn_t @ t_coor
     fr_traces = []
     for name, R, o in [("Table", T_w, origins["Table"]),
                        ("DUT", DUT_w, origins["DUT"]),
@@ -247,8 +265,8 @@ for th in thetas:
     fr_traces.append(go.Scatter3d(x=px, y=py, z=pz, mode="lines",
                                   line=dict(color="darkorange", width=2),
                                   showlegend=False))
-    fr_traces.append(go.Scatter3d(x=[0, z_axis[0] * 6], y=[0, z_axis[1] * 6],
-                                  z=[0, z_axis[2] * 6], mode="lines",
+    fr_traces.append(go.Scatter3d(x=[0, axis_world[0] * 6], y=[0, axis_world[1] * 6],
+                                  z=[0, axis_world[2] * 6], mode="lines",
                                   line=dict(color="black", width=2, dash="dash"),
                                   showlegend=False))
     all_frames.append(go.Frame(data=fr_traces, name=f"{th:.0f}"))
@@ -301,8 +319,7 @@ st.dataframe(df, use_container_width=True)
 st.divider()
 st.subheader("說明")
 st.write(
-    f"- 真實轉軸 (世界下): z_axis = [{z_axis[0]:.4f}, {z_axis[1]:.4f}, {z_axis[2]:.4f}]"
-    f"  (Table 自身 Z 軸, non-orthogonal)"
+    f"- 目前累積姿態 R_turn 已旋轉 (累積的 Table 世界姿態)。"
 )
 st.write(
     "- 此版 R_dut 沿 Table 自身非正交軸 (t_x/t_y/t_z) 合成"
@@ -310,14 +327,19 @@ st.write(
     "故 dut_rz/ry/rx 為耦合角, 非 yaw/pitch/roll。"
 )
 st.write(
-    "- 轉台繞 z_axis 做正交 Rodrigues 旋轉 R_turn(θ)，DUT/Gyro 世界姿態為 R_turn·R_dut"
-    " / R_turn·R_dut·R_g。"
+    "- 三軸轉台: radio 選一次繞一軸 (Z/X/Y)，動畫從 0 掃到目標 θ。"
+    " 按下『累積此段旋轉』後，把繞『當下 Table 軸』轉 θ 左乘疊加到 R_turn:"
+    " R_turn ← rodrigues(axis_world, θ)·R_turn，其中 axis_world = R_turn·t_coor[:,i]。"
 )
 st.write(
-    "- gyro 量測與轉動角度 θ 無關: w_gyro = Gyro_worldᵀ·(ω·z_axis)"
-    " = ω·R_gᵀ·R_dutᵀ·z_axis (因 R_turnᵀ·z_axis = z_axis)。"
+    f"- 當下轉軸 (世界下): axis_world = [{axis_world[0]:.4f}, {axis_world[1]:.4f},"
+    f" {axis_world[2]:.4f}] (隨累積姿態漂移, 非固定)。"
+)
+st.write(
+    "- gyro 量測: w_gyro = Gyro_worldᵀ·(ω·axis_world)；|w_gyro| = ω，"
+    " 三分量隨姿態漂移而改變。"
 )
 st.caption(
-    "non-orthogonal 誤差反映在真實轉軸 z_axis 方向，且 R_dut 沿斜軸合成, "
-    "進而影響 gyro 量測的三軸分量。"
+    "non-orthogonal 誤差反映在 Table 自身軸，R_dut 沿斜軸合成, "
+    "且轉台繞當下 Table 軸累積, 進而影響 gyro 量測的三軸分量。"
 )
