@@ -6,7 +6,7 @@
 
 ## 1. 背景與動機
 
-原 `app.py` 模型將 non-orthogonal 基底 `t_coor = [1,0,sin(err); 0,1,0; 0,0,cos(err)]` 直接作為旋轉矩陣乘入 DUT/Gyro 姿態（`DUT_world = t_coor @ R_dut`），導致 DUT/Gyro 世界姿態被污染成 non-orthogonal。物理上 DUT（衛星）與 Gyro 是正交剛體，不應繼承轉台機構的製造誤差。同時，`RateTable.m` 註解「轉台 z 軸會繞出 cone」在「繞真實斜 Z 軸轉動」的模型下是錯誤的——Z 軸固定，不掃 cone。
+原 `sim_orth_dut.py`（舊名 `app.py`）模型將 non-orthogonal 基底 `t_coor = [1,0,sin(err); 0,1,0; 0,0,cos(err)]` 直接作為旋轉矩陣乘入 DUT/Gyro 姿態（`DUT_world = t_coor @ R_dut`），導致 DUT/Gyro 世界姿態被污染成 non-orthogonal。物理上 DUT（衛星）與 Gyro 是正交剛體，不應繼承轉台機構的製造誤差。同時，`RateTable.m` 註解「轉台 z 軸會繞出 cone」在「繞真實斜 Z 軸轉動」的模型下是錯誤的——Z 軸固定，不掃 cone。
 
 ## 2. 統一物理模型
 
@@ -55,7 +55,7 @@ w_gyro = Gyro_world(θ)ᵀ @ (ω · z_axis)
 4. 重算 `DUT_world = R_turn * R_dut`、`Gyro_world = R_turn * R_dut * R_g`、`w_gyro = Gyro_world' * (w*z_axis)`。
 5. 移除無意義的 `w_gyro_simple`（對照式）。
 
-## 4. `app.py` 修改
+## 4. `sim_orth_dut.py`（舊名 `app.py`）修改
 1. 新增 `rodrigues()`。
 2. 側邊欄移除「轉動軸 X/Y/Z」radio，新增「轉動角度 θ」滑桿（0–360°，預設 0）。
 3. 新增 `z_axis = t_coor[:,2]`、`R_turn = rodrigues(z_axis, θ)`。
