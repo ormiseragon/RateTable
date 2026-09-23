@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import math
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -50,26 +51,39 @@ st.caption(
 )
 
 with st.sidebar:
+    if st.session_state.get("pending_reset", False):
+        st.session_state["err_slider"] = 0.0
+        for k in ["dut_rz", "dut_ry", "dut_rx", "g_rz", "g_ry", "g_rx"]:
+            st.session_state[k] = 0
+        st.session_state["pending_reset"] = False
+
     st.header("Table (轉台) 相對於 World")
-    err = st.slider("Table Z 軸誤差 (deg)", 0.0, 30.0, 5.0, 0.1)
+    err = st.slider("Table Z 軸誤差 (deg)", 0.0, 30.0, 5.0, 0.1, key="err_slider")
     st.caption(f"err = {err:.1f}° → t_coor Z 軸斜向 X 軸")
 
     st.header("DUT 相對於 Table (沿非正交軸)")
     st.caption("dut_rz/ry/rx 為繞 Table 自身斜軸 (t_z/t_y/t_x) 的耦合角, 非 yaw/pitch/roll")
-    dut_rz = st.slider("DUT 繞 t_z (deg)", -180, 180, 15)
-    dut_ry = st.slider("DUT 繞 t_y (deg)", -180, 180, 10)
-    dut_rx = st.slider("DUT 繞 t_x (deg)", -180, 180, 5)
+    dut_rz = st.slider("DUT 繞 t_z (deg)", -180, 180, 15, key="dut_rz")
+    dut_ry = st.slider("DUT 繞 t_y (deg)", -180, 180, 10, key="dut_ry")
+    dut_rx = st.slider("DUT 繞 t_x (deg)", -180, 180, 5, key="dut_rx")
 
     st.header("Gyro 相對於 DUT")
-    g_rz = st.slider("Gyro yaw (deg)", -180, 180, -45)
-    g_ry = st.slider("Gyro pitch (deg)", -180, 180, 30)
-    g_rx = st.slider("Gyro roll (deg)", -180, 180, 60)
+    g_rz = st.slider("Gyro yaw (deg)", -180, 180, -45, key="g_rz")
+    g_ry = st.slider("Gyro pitch (deg)", -180, 180, 30, key="g_ry")
+    g_rx = st.slider("Gyro roll (deg)", -180, 180, 60, key="g_rx")
 
     st.header("驅動轉台 (單軸定位)")
-    st.caption("一次獨立繞一軸 (固定 Table 軸), 切軸即重來; 不累積")
+    st.caption("一次獨立繞一軸 (固定 Table 軸), 切軸即重來; 不累積; 連續轉動")
     omega = st.slider("角速度 ω (d/s)", 0.0, 10.0, 1.0, 0.1)
     axis_choice = st.radio("轉台繞軸 (一次一軸)", ["Z", "X", "Y"], index=0)
-    target_theta = st.slider("目標角度 θ (deg)", 0.0, 360.0, 360.0, 1.0)
+
+    st.header("視角 (3D)")
+    azimuth = st.slider("azimuth (deg)", 0, 360, 30, 1)
+    elevation = st.slider("elevation (deg)", 0, 90, 25, 1)
+
+    if st.button("重置全部為 0", type="primary"):
+        st.session_state["pending_reset"] = True
+        st.rerun()
 
 err = np.deg2rad(err)
 t_coor = np.array([[1, 0, np.sin(err)],
@@ -200,8 +214,17 @@ def build_plot(theta_deg):
     add_disc_trace(fig, T_w, origins["Table"], show_legend=False)
     add_axis_trace(fig, axis_world, show_legend=False)
     fig.update_layout(
-        scene=dict(xaxis_title="X", yaxis_title="Y", zaxis_title="Z",
-                   aspectmode="data"),
+        scene=dict(
+            xaxis_title="X", yaxis_title="Y", zaxis_title="Z",
+            aspectmode="data",
+            camera=dict(
+                eye=dict(x=16 * math.cos(math.radians(elevation)) * math.sin(math.radians(azimuth)),
+                         y=16 * math.cos(math.radians(elevation)) * math.cos(math.radians(azimuth)),
+                         z=16 * math.sin(math.radians(elevation))),
+                up=dict(x=0, y=0, z=1),
+                center=dict(x=0, y=0, z=0),
+            ),
+        ),
         title="Coordinate frames (Red=X, Green=Y, Blue=Z) + table disc",
         showlegend=True,
         updatemenus=[dict(
@@ -225,12 +248,10 @@ def build_plot(theta_deg):
 
 n_frames = 40
 n_loops = 4
-if target_theta > 0:
-    thetas = np.linspace(0, target_theta, n_frames, endpoint=False)
-    thetas = np.concatenate([thetas + k * target_theta for k in range(n_loops)])
-    thetas = np.append(thetas, thetas[-1] + (thetas[1] - thetas[0]))
-else:
-    thetas = [0.0]
+cycle_deg = 360.0
+thetas = np.linspace(0, cycle_deg, n_frames, endpoint=False)
+thetas = np.concatenate([thetas + k * cycle_deg for k in range(n_loops)])
+thetas = np.append(thetas, thetas[-1] + (thetas[1] - thetas[0]))
 fig_anim = build_plot(thetas[0])
 all_frames = []
 for th in thetas:
@@ -326,7 +347,7 @@ st.write(
 )
 st.write(
     "- 單軸獨立轉動: radio 選一次一軸 (Z/X/Y)，R_turn = rodrigues(t_coor[:,i], θ)，"
-    " 繞『固定』Table 軸, 不累積, 切軸即重來。動畫 θ 從 0 掃到目標 θ 並重複數圈。"
+    " 繞『固定』Table 軸, 不累積, 切軸即重來。動畫 θ 從 0 掃到 360° 並重複數圈 (連續轉動)。"
 )
 st.write(
     f"- 轉軸 (世界下, 固定): axis_world = [{axis_world[0]:.4f}, {axis_world[1]:.4f},"
